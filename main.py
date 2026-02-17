@@ -106,12 +106,14 @@ def convert_pdf_to_images(
     job_id: str,
     file_index: int,
     total_files: int,
+    original_filename: str = "",
 ) -> list[Path]:
     """PDFを画像に変換する"""
     output_files = []
     doc = fitz.open(str(pdf_path))
     total_pages = len(doc)
-    stem = pdf_path.stem
+    # 元のPDFファイル名から拡張子を除いた名前を使用
+    stem = Path(original_filename).stem if original_filename else pdf_path.stem
 
     for page_num in range(total_pages):
         page = doc[page_num]
@@ -123,21 +125,14 @@ def convert_pdf_to_images(
         # Pillow Imageに変換
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
-        # ファイル名: 元のPDF名_ページ番号.拡張子
-        if total_pages == 1:
-            out_name = f"{stem}.{fmt}"
-        else:
-            out_name = f"{stem}_page{page_num + 1:03d}.{fmt}"
-
+        # ファイル名: 元のPDF名_連番.拡張子（1始まり）
+        out_name = f"{stem}_{page_num + 1}.{fmt}"
         out_path = output_dir / out_name
 
-        # 同名ファイルが存在する場合はリネーム
+        # 同名ファイルが存在する場合はサフィックス追加
         counter = 1
         while out_path.exists():
-            if total_pages == 1:
-                out_name = f"{stem}_{counter}.{fmt}"
-            else:
-                out_name = f"{stem}_page{page_num + 1:03d}_{counter}.{fmt}"
+            out_name = f"{stem}_{page_num + 1}({counter}).{fmt}"
             out_path = output_dir / out_name
             counter += 1
 
@@ -283,6 +278,7 @@ async def convert(req: ConvertRequest):
                 job_id=job_id,
                 file_index=i,
                 total_files=total_files,
+                original_filename=file_info["filename"],
             )
             conversion_jobs[job_id]["output_files"].extend(
                 [str(f) for f in result_files]
