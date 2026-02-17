@@ -1,0 +1,9 @@
+{
+  "default_output_dir": "",
+  "default_format": "png",
+  "default_dpi": 200,
+  "max_file_size_mb": 100,
+  "temp_dir": "./temp",
+  "port": 5000,
+  "auto_open_browser": true
+}

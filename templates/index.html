@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF変換ツール</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- ヘッダー -->
+    <header class="header">
+        <h1 class="header-title">PDF変換ツール</h1>
+        <span class="header-version">v1.0.0</span>
+    </header>
+
+    <main class="container">
+        <!-- ファイルアップロードエリア -->
+        <section class="section">
+            <h2 class="section-title">1. PDFファイルを選択</h2>
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📄</div>
+                <p class="upload-text">ここにPDFファイルをドラッグ＆ドロップ</p>
+                <p class="upload-subtext">または</p>
+                <label class="upload-btn">
+                    ファイルを選択
+                    <input type="file" id="fileInput" accept=".pdf" multiple hidden>
+                </label>
+            </div>
+            <div class="file-list" id="fileList"></div>
+        </section>
+
+        <!-- 変換設定パネル -->
+        <section class="section">
+            <h2 class="section-title">2. 変換設定</h2>
+            <div class="settings-grid">
+                <div class="setting-group">
+                    <label class="setting-label">変換形式</label>
+                    <div class="radio-group">
+                        <label class="radio-item">
+                            <input type="radio" name="format" value="png" checked>
+                            <span>PNG</span>
+                        </label>
+                        <label class="radio-item">
+                            <input type="radio" name="format" value="jpg">
+                            <span>JPG</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">解像度</label>
+                    <div class="radio-group">
+                        <label class="radio-item">
+                            <input type="radio" name="dpi" value="150">
+                            <span>低 (150dpi)</span>
+                        </label>
+                        <label class="radio-item">
+                            <input type="radio" name="dpi" value="200" checked>
+                            <span>標準 (200dpi)</span>
+                        </label>
+                        <label class="radio-item">
+                            <input type="radio" name="dpi" value="300">
+                            <span>高 (300dpi)</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 変換実行ボタン -->
+        <section class="section">
+            <button class="convert-btn" id="convertBtn" disabled>
+                <span class="convert-btn-text">変換開始</span>
+                <span class="convert-btn-spinner" hidden></span>
+            </button>
+        </section>
+
+        <!-- 進捗表示エリア -->
+        <section class="section" id="progressSection" hidden>
+            <h2 class="section-title">変換中...</h2>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+            </div>
+            <p class="progress-text" id="progressText">準備中...</p>
+        </section>
+
+        <!-- 結果表示 -->
+        <section class="section" id="resultSection" hidden>
+            <h2 class="section-title">変換結果</h2>
+            <div class="result-summary" id="resultSummary"></div>
+            <div class="result-files" id="resultFiles"></div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>PDF変換ツール v1.0.0 | ローカル実行</p>
+    </footer>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
