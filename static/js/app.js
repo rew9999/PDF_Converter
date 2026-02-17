@@ -265,8 +265,11 @@ fileInput.addEventListener("change", (e) => {
     }
 });
 
-// ドラッグ＆ドロップ
-uploadArea.addEventListener("click", () => fileInput.click());
+// アップロードエリアのクリック（labelやinputからのクリックは除外して二重起動を防止）
+uploadArea.addEventListener("click", (e) => {
+    if (e.target.closest("label") || e.target.tagName === "INPUT") return;
+    fileInput.click();
+});
 
 uploadArea.addEventListener("dragover", (e) => {
     e.preventDefault();
