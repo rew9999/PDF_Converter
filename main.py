@@ -199,13 +199,33 @@ def _render_page_to_image_bytes(page, dpi: int = 200) -> bytes:
     return pix.tobytes("png")
 
 
+def _get_ocr_lang() -> str:
+    """利用可能なTesseract言語を検出してOCR用言語文字列を返す"""
+    try:
+        langs = pytesseract.get_languages(config="")
+        available = set(langs)
+        # 日本語+英語を優先、なければ英語のみ、それもなければデフォルト
+        if "jpn" in available and "eng" in available:
+            return "jpn+eng"
+        if "jpn" in available:
+            return "jpn"
+        if "eng" in available:
+            return "eng"
+        return langs[0] if langs else "eng"
+    except Exception:
+        return "eng"
+
+
 def _ocr_page(page, dpi: int = 300) -> str:
     """ページを画像化してOCRでテキストを抽出する"""
-    img_bytes = _render_page_to_image_bytes(page, dpi=dpi)
-    pil_image = Image.open(io.BytesIO(img_bytes))
-    # 日本語+英語でOCR実行
-    text = pytesseract.image_to_string(pil_image, lang="jpn+eng")
-    return text.strip()
+    try:
+        img_bytes = _render_page_to_image_bytes(page, dpi=dpi)
+        pil_image = Image.open(io.BytesIO(img_bytes))
+        lang = _get_ocr_lang()
+        text = pytesseract.image_to_string(pil_image, lang=lang)
+        return text.strip()
+    except Exception:
+        return ""
 
 
 def convert_pdf_to_docx(
@@ -573,6 +593,87 @@ async def delete_uploaded_file(file_id: str):
 async def get_config():
     """現在の設定を取得"""
     return config
+
+
+@app.get("/ocr-status")
+async def ocr_status():
+    """OCRの利用可能状況を返す"""
+    result = {"tesseract_available": False, "languages": [], "jpn_available": False}
+    try:
+        langs = pytesseract.get_languages(config="")
+        result["tesseract_available"] = True
+        result["languages"] = langs
+        result["jpn_available"] = "jpn" in langs
+    except Exception:
+        pass
+    return result
+
+
+@app.post("/ocr-install-jpn")
+async def ocr_install_jpn():
+    """日本語OCRデータをダウンロードしてインストールする"""
+    import subprocess
+    import urllib.request
+
+    # Tesseractのtessdataディレクトリを特定
+    try:
+        output = subprocess.check_output(
+            ["tesseract", "--print-parameters"],
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except Exception:
+        raise HTTPException(500, "Tesseract OCRが見つかりません")
+
+    # tessdata ディレクトリを探す
+    tessdata_dir = None
+    # 一般的なパスを試行
+    candidates = []
+    try:
+        # tesseract --print-parameters の出力からtessdata_prefixを取得
+        for line in output.split("\n"):
+            if "tessdata" in line.lower():
+                parts = line.strip().split()
+                for p in parts:
+                    if os.path.isdir(p):
+                        candidates.append(p)
+    except Exception:
+        pass
+
+    # 一般的なインストール先を追加
+    if sys.platform == "win32":
+        candidates += [
+            r"C:\Program Files\Tesseract-OCR\tessdata",
+            r"C:\Program Files (x86)\Tesseract-OCR\tessdata",
+        ]
+    else:
+        candidates += [
+            "/usr/share/tesseract-ocr/5/tessdata",
+            "/usr/share/tesseract-ocr/4.00/tessdata",
+            "/usr/share/tessdata",
+            "/usr/local/share/tessdata",
+        ]
+
+    for c in candidates:
+        if os.path.isdir(c):
+            tessdata_dir = c
+            break
+
+    if not tessdata_dir:
+        raise HTTPException(500, "tessdataディレクトリが見つかりません")
+
+    jpn_path = os.path.join(tessdata_dir, "jpn.traineddata")
+    if os.path.exists(jpn_path):
+        return {"message": "日本語データは既にインストール済みです", "path": jpn_path}
+
+    # GitHubからダウンロード
+    url = "https://github.com/tesseract-ocr/tessdata_best/raw/main/jpn.traineddata"
+    try:
+        urllib.request.urlretrieve(url, jpn_path)
+    except Exception as e:
+        raise HTTPException(500, f"ダウンロードに失敗しました: {e}")
+
+    return {"message": "日本語OCRデータをインストールしました", "path": jpn_path}
 
 
 def open_browser(port: int):

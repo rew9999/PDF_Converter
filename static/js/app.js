@@ -258,12 +258,63 @@ function showResult(data) {
 
 // ---------- イベントリスナー ----------
 
-// 変換形式変更時に解像度設定の表示/非表示を切り替え
+// ---------- OCRステータス ----------
+const ocrStatusGroup = $("#ocrStatusGroup");
+const ocrStatusText = $("#ocrStatusText");
+const ocrInstallBtn = $("#ocrInstallBtn");
+
+async function checkOcrStatus() {
+    try {
+        const res = await fetch("/ocr-status");
+        const data = await res.json();
+        if (!data.tesseract_available) {
+            ocrStatusText.textContent = "Tesseract OCR 未インストール（スキャンPDFは画像として出力されます）";
+            ocrStatusText.style.color = "#b45309";
+            ocrInstallBtn.hidden = true;
+        } else if (!data.jpn_available) {
+            ocrStatusText.textContent = "OCR有効（英語のみ）- 日本語データ未インストール";
+            ocrStatusText.style.color = "#b45309";
+            ocrInstallBtn.hidden = false;
+        } else {
+            ocrStatusText.textContent = "OCR有効（日本語 + 英語対応）";
+            ocrStatusText.style.color = "#16a34a";
+            ocrInstallBtn.hidden = true;
+        }
+    } catch {
+        ocrStatusText.textContent = "OCRステータスを確認できません";
+        ocrStatusText.style.color = "#6b7280";
+    }
+}
+
+ocrInstallBtn.addEventListener("click", async () => {
+    ocrInstallBtn.disabled = true;
+    ocrInstallBtn.textContent = "インストール中...";
+    try {
+        const res = await fetch("/ocr-install-jpn", { method: "POST" });
+        const data = await res.json();
+        if (res.ok) {
+            alert(data.message);
+            checkOcrStatus();
+        } else {
+            alert("エラー: " + (data.detail || "インストールに失敗しました"));
+        }
+    } catch (e) {
+        alert("インストールに失敗しました: " + e.message);
+    } finally {
+        ocrInstallBtn.disabled = false;
+        ocrInstallBtn.textContent = "日本語データをインストール";
+    }
+});
+
+// 変換形式変更時に解像度設定・OCRステータスの表示/非表示を切り替え
 document.querySelectorAll('input[name="format"]').forEach((radio) => {
     radio.addEventListener("change", () => {
         const fmt = getSelectedFormat();
         const isImage = fmt === "png" || fmt === "jpg";
+        const isDocument = fmt === "docx" || fmt === "xlsx";
         dpiGroup.hidden = !isImage;
+        ocrStatusGroup.hidden = !isDocument;
+        if (isDocument) checkOcrStatus();
     });
 });
 

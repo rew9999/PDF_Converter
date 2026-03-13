@@ -218,6 +218,39 @@ body {
     height: 16px;
 }
 
+/* ---------- OCRステータス ---------- */
+.ocr-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    padding: 8px 12px;
+    background: #f9fafb;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+}
+
+.ocr-install-btn {
+    padding: 6px 14px;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.ocr-install-btn:hover {
+    background: #1d4ed8;
+}
+
+.ocr-install-btn:disabled {
+    background: #93c5fd;
+    cursor: wait;
+}
+
 /* ---------- 変換ボタン ---------- */
 .convert-btn {
     display: flex;
