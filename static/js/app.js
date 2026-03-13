@@ -18,6 +18,7 @@ const progressSection = $("#progressSection");
 const progressBar = $("#progressBar");
 const progressText = $("#progressText");
 const resultSection = $("#resultSection");
+const dpiGroup = $("#dpiGroup");
 const resultSummary = $("#resultSummary");
 const resultFiles = $("#resultFiles");
 
@@ -256,6 +257,15 @@ function showResult(data) {
 }
 
 // ---------- イベントリスナー ----------
+
+// 変換形式変更時に解像度設定の表示/非表示を切り替え
+document.querySelectorAll('input[name="format"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+        const fmt = getSelectedFormat();
+        const isImage = fmt === "png" || fmt === "jpg";
+        dpiGroup.hidden = !isImage;
+    });
+});
 
 // ファイル選択
 fileInput.addEventListener("change", (e) => {

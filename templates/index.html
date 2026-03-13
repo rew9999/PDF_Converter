@@ -38,16 +38,24 @@
                     <div class="radio-group">
                         <label class="radio-item">
                             <input type="radio" name="format" value="png" checked>
-                            <span>PNG</span>
+                            <span>PNG（画像）</span>
                         </label>
                         <label class="radio-item">
                             <input type="radio" name="format" value="jpg">
-                            <span>JPG</span>
+                            <span>JPG（画像）</span>
+                        </label>
+                        <label class="radio-item">
+                            <input type="radio" name="format" value="docx">
+                            <span>Word（.docx）</span>
+                        </label>
+                        <label class="radio-item">
+                            <input type="radio" name="format" value="xlsx">
+                            <span>Excel（.xlsx）</span>
                         </label>
                     </div>
                 </div>
-                <div class="setting-group">
-                    <label class="setting-label">解像度</label>
+                <div class="setting-group" id="dpiGroup">
+                    <label class="setting-label">解像度（画像のみ）</label>
                     <div class="radio-group">
                         <label class="radio-item">
                             <input type="radio" name="dpi" value="150">

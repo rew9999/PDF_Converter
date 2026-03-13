@@ -11,12 +11,20 @@ from pathlib import Path
 from threading import Timer
 
 import fitz  # PyMuPDF
+from docx import Document
+from docx.shared import Inches, Pt
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from openpyxl import Workbook
 from PIL import Image
 from pydantic import BaseModel
+
+# 対応フォーマット
+IMAGE_FORMATS = ("png", "jpg")
+DOCUMENT_FORMATS = ("docx", "xlsx")
+ALL_FORMATS = IMAGE_FORMATS + DOCUMENT_FORMATS
 
 # パス設定（PyInstaller対応）
 if getattr(sys, "frozen", False):
@@ -157,6 +165,138 @@ def convert_pdf_to_images(
     return output_files
 
 
+def convert_pdf_to_docx(
+    pdf_path: Path,
+    output_dir: Path,
+    job_id: str,
+    file_index: int,
+    total_files: int,
+    original_filename: str = "",
+) -> list[Path]:
+    """PDFをWord(.docx)に変換する"""
+    stem = Path(original_filename).stem if original_filename else pdf_path.stem
+    out_name = f"{stem}.docx"
+    out_path = output_dir / out_name
+
+    # 同名ファイルが存在する場合はサフィックス追加
+    counter = 1
+    while out_path.exists():
+        out_name = f"{stem}({counter}).docx"
+        out_path = output_dir / out_name
+        counter += 1
+
+    pdf_doc = fitz.open(str(pdf_path))
+    total_pages = len(pdf_doc)
+    word_doc = Document()
+
+    for page_num in range(total_pages):
+        page = pdf_doc[page_num]
+
+        if page_num > 0:
+            word_doc.add_page_break()
+
+        # テキストブロックを位置順に抽出
+        blocks = page.get_text("blocks")
+        # 上から下、左から右の順にソート
+        blocks.sort(key=lambda b: (b[1], b[0]))
+
+        for block in blocks:
+            # block[4] がテキスト内容、block[6] がブロックタイプ（0=テキスト）
+            if block[6] == 0:
+                text = block[4].strip()
+                if text:
+                    word_doc.add_paragraph(text)
+
+        # 進捗更新
+        if job_id in conversion_jobs:
+            file_progress = ((page_num + 1) / total_pages) * 100
+            overall_progress = (file_index * 100 + file_progress) / total_files
+            conversion_jobs[job_id]["progress"] = int(overall_progress)
+            conversion_jobs[job_id]["current_page"] = page_num + 1
+            conversion_jobs[job_id]["total_pages"] = total_pages
+
+    word_doc.save(str(out_path))
+    pdf_doc.close()
+    return [out_path]
+
+
+def convert_pdf_to_xlsx(
+    pdf_path: Path,
+    output_dir: Path,
+    job_id: str,
+    file_index: int,
+    total_files: int,
+    original_filename: str = "",
+) -> list[Path]:
+    """PDFをExcel(.xlsx)に変換する"""
+    stem = Path(original_filename).stem if original_filename else pdf_path.stem
+    out_name = f"{stem}.xlsx"
+    out_path = output_dir / out_name
+
+    # 同名ファイルが存在する場合はサフィックス追加
+    counter = 1
+    while out_path.exists():
+        out_name = f"{stem}({counter}).xlsx"
+        out_path = output_dir / out_name
+        counter += 1
+
+    pdf_doc = fitz.open(str(pdf_path))
+    total_pages = len(pdf_doc)
+    wb = Workbook()
+    wb.remove(wb.active)  # デフォルトシートを削除
+
+    for page_num in range(total_pages):
+        page = pdf_doc[page_num]
+        ws = wb.create_sheet(title=f"Page{page_num + 1}")
+
+        # テーブル構造を検出して行・列に配置
+        # テキストブロックを取得し、Y座標でグループ化して行に変換
+        blocks = page.get_text("blocks")
+        text_blocks = [b for b in blocks if b[6] == 0 and b[4].strip()]
+
+        if not text_blocks:
+            continue
+
+        # Y座標でグループ化（近い位置のブロックを同じ行とみなす）
+        text_blocks.sort(key=lambda b: (b[1], b[0]))
+        rows = []
+        current_row = [text_blocks[0]]
+        for block in text_blocks[1:]:
+            # Y座標の差が小さければ同じ行
+            if abs(block[1] - current_row[0][1]) < 10:
+                current_row.append(block)
+            else:
+                rows.append(current_row)
+                current_row = [block]
+        rows.append(current_row)
+
+        # 各行をX座標順にソートしてセルに配置
+        for row_idx, row_blocks in enumerate(rows, start=1):
+            row_blocks.sort(key=lambda b: b[0])
+            for col_idx, block in enumerate(row_blocks, start=1):
+                text = block[4].strip()
+                # 数値として解釈できる場合は数値で入力
+                try:
+                    value = float(text.replace(",", ""))
+                    if value == int(value):
+                        value = int(value)
+                    ws.cell(row=row_idx, column=col_idx, value=value)
+                except ValueError:
+                    ws.cell(row=row_idx, column=col_idx, value=text)
+
+        # 進捗更新
+        if job_id in conversion_jobs:
+            file_progress = ((page_num + 1) / total_pages) * 100
+            overall_progress = (file_index * 100 + file_progress) / total_files
+            conversion_jobs[job_id]["progress"] = int(overall_progress)
+            conversion_jobs[job_id]["current_page"] = page_num + 1
+            conversion_jobs[job_id]["total_pages"] = total_pages
+
+    wb.save(str(out_path))
+    pdf_doc.close()
+    return [out_path]
+
+
 # ---------- エンドポイント ----------
 
 
@@ -220,9 +360,9 @@ async def upload_file(file: UploadFile = File(...)):
 async def convert(req: ConvertRequest):
     """変換実行"""
     # バリデーション
-    if req.format not in ("png", "jpg"):
-        raise HTTPException(status_code=400, detail="対応していない形式です（png, jpg のみ）")
-    if req.dpi not in (150, 200, 300):
+    if req.format not in ALL_FORMATS:
+        raise HTTPException(status_code=400, detail=f"対応していない形式です（{', '.join(ALL_FORMATS)}）")
+    if req.format in IMAGE_FORMATS and req.dpi not in (150, 200, 300):
         raise HTTPException(status_code=400, detail="対応していない解像度です（150, 200, 300）")
     if not req.file_ids:
         raise HTTPException(status_code=400, detail="変換するファイルが選択されていません")
@@ -270,16 +410,35 @@ async def convert(req: ConvertRequest):
         conversion_jobs[job_id]["current_file"] = file_info["filename"]
 
         try:
-            result_files = convert_pdf_to_images(
-                pdf_path=file_info["path"],
-                output_dir=output_dir,
-                fmt=req.format,
-                dpi=req.dpi,
-                job_id=job_id,
-                file_index=i,
-                total_files=total_files,
-                original_filename=file_info["filename"],
-            )
+            if req.format in IMAGE_FORMATS:
+                result_files = convert_pdf_to_images(
+                    pdf_path=file_info["path"],
+                    output_dir=output_dir,
+                    fmt=req.format,
+                    dpi=req.dpi,
+                    job_id=job_id,
+                    file_index=i,
+                    total_files=total_files,
+                    original_filename=file_info["filename"],
+                )
+            elif req.format == "docx":
+                result_files = convert_pdf_to_docx(
+                    pdf_path=file_info["path"],
+                    output_dir=output_dir,
+                    job_id=job_id,
+                    file_index=i,
+                    total_files=total_files,
+                    original_filename=file_info["filename"],
+                )
+            elif req.format == "xlsx":
+                result_files = convert_pdf_to_xlsx(
+                    pdf_path=file_info["path"],
+                    output_dir=output_dir,
+                    job_id=job_id,
+                    file_index=i,
+                    total_files=total_files,
+                    original_filename=file_info["filename"],
+                )
             conversion_jobs[job_id]["output_files"].extend(
                 [str(f) for f in result_files]
             )

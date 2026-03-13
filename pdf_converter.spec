@@ -28,6 +28,8 @@ a = Analysis(
         'uvicorn.lifespan.off',
         'multipart',
         'multipart.multipart',
+        'docx',
+        'openpyxl',
     ],
     hookspath=[],
     hooksconfig={},
