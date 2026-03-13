@@ -10,7 +10,10 @@ import webbrowser
 from pathlib import Path
 from threading import Timer
 
+import io
+
 import fitz  # PyMuPDF
+import pytesseract
 from docx import Document
 from docx.shared import Inches, Pt
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -18,6 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XlImage
 from PIL import Image
 from pydantic import BaseModel
 
@@ -195,6 +199,15 @@ def _render_page_to_image_bytes(page, dpi: int = 200) -> bytes:
     return pix.tobytes("png")
 
 
+def _ocr_page(page, dpi: int = 300) -> str:
+    """ページを画像化してOCRでテキストを抽出する"""
+    img_bytes = _render_page_to_image_bytes(page, dpi=dpi)
+    pil_image = Image.open(io.BytesIO(img_bytes))
+    # 日本語+英語でOCR実行
+    text = pytesseract.image_to_string(pil_image, lang="jpn+eng")
+    return text.strip()
+
+
 def convert_pdf_to_docx(
     pdf_path: Path,
     output_dir: Path,
@@ -234,13 +247,18 @@ def convert_pdf_to_docx(
             for text in text_blocks:
                 word_doc.add_paragraph(text)
         else:
-            # テキストが取得できない場合（スキャンPDF等）はページを画像として挿入
-            import io
-            img_bytes = _render_page_to_image_bytes(page)
-            img_stream = io.BytesIO(img_bytes)
-            # A4幅に合わせて画像を挿入（余白を考慮して6インチ幅）
-            word_doc.add_paragraph()  # 空行
-            word_doc.add_picture(img_stream, width=Inches(6))
+            # テキストが取得できない場合（スキャンPDF等）→ OCRで文字認識
+            ocr_text = _ocr_page(page)
+            if ocr_text:
+                for line in ocr_text.split("\n"):
+                    if line.strip():
+                        word_doc.add_paragraph(line.strip())
+            else:
+                # OCRでも取得できない場合は画像として挿入
+                img_bytes = _render_page_to_image_bytes(page)
+                img_stream = io.BytesIO(img_bytes)
+                word_doc.add_paragraph()
+                word_doc.add_picture(img_stream, width=Inches(6))
 
         # 進捗更新
         if job_id in conversion_jobs:
@@ -264,10 +282,6 @@ def convert_pdf_to_xlsx(
     original_filename: str = "",
 ) -> list[Path]:
     """PDFをExcel(.xlsx)に変換する"""
-    import io
-
-    from openpyxl.drawing.image import Image as XlImage
-
     stem = Path(original_filename).stem if original_filename else pdf_path.stem
     out_name = f"{stem}.xlsx"
     out_path = output_dir / out_name
@@ -331,14 +345,26 @@ def convert_pdf_to_xlsx(
                     except ValueError:
                         ws.cell(row=row_idx, column=col_idx, value=text)
         else:
-            # テキストが取得できない場合: プレーンテキストを試行
-            plain = page.get_text("text").strip()
-            if plain:
-                for row_idx, line in enumerate(plain.split("\n"), start=1):
-                    if line.strip():
-                        ws.cell(row=row_idx, column=1, value=line.strip())
+            # テキストが取得できない場合: OCRで文字認識
+            ocr_text = _ocr_page(page)
+            if ocr_text:
+                lines = [l for l in ocr_text.split("\n") if l.strip()]
+                for row_idx, line in enumerate(lines, start=1):
+                    # タブやスペース区切りで列を分割
+                    parts = line.split("\t") if "\t" in line else line.split()
+                    for col_idx, part in enumerate(parts, start=1):
+                        text = part.strip()
+                        if not text:
+                            continue
+                        try:
+                            value = float(text.replace(",", ""))
+                            if value == int(value):
+                                value = int(value)
+                            ws.cell(row=row_idx, column=col_idx, value=value)
+                        except ValueError:
+                            ws.cell(row=row_idx, column=col_idx, value=text)
             else:
-                # テキストが全くない場合（スキャンPDF等）: ページを画像として埋め込み
+                # OCRでもテキストが取得できない場合は画像を埋め込み
                 img_bytes = _render_page_to_image_bytes(page)
                 img_stream = io.BytesIO(img_bytes)
                 xl_img = XlImage(img_stream)
