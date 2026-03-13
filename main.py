@@ -165,6 +165,36 @@ def convert_pdf_to_images(
     return output_files
 
 
+def _extract_page_text_blocks(page) -> list[str]:
+    """ページからテキストを抽出する（複数の方法を試行）"""
+    # 方法1: blocksモードで抽出
+    blocks = page.get_text("blocks")
+    text_blocks = []
+    for b in sorted(blocks, key=lambda b: (b[1], b[0])):
+        if b[6] == 0:  # テキストブロック
+            text = b[4].strip()
+            if text:
+                text_blocks.append(text)
+
+    if text_blocks:
+        return text_blocks
+
+    # 方法2: プレーンテキストで抽出
+    plain = page.get_text("text").strip()
+    if plain:
+        return [line for line in plain.split("\n") if line.strip()]
+
+    return []
+
+
+def _render_page_to_image_bytes(page, dpi: int = 200) -> bytes:
+    """ページを画像としてレンダリングし、PNGバイト列を返す"""
+    zoom = dpi / 72
+    matrix = fitz.Matrix(zoom, zoom)
+    pix = page.get_pixmap(matrix=matrix)
+    return pix.tobytes("png")
+
+
 def convert_pdf_to_docx(
     pdf_path: Path,
     output_dir: Path,
@@ -188,6 +218,7 @@ def convert_pdf_to_docx(
     pdf_doc = fitz.open(str(pdf_path))
     total_pages = len(pdf_doc)
     word_doc = Document()
+    temp_images = []
 
     for page_num in range(total_pages):
         page = pdf_doc[page_num]
@@ -195,17 +226,21 @@ def convert_pdf_to_docx(
         if page_num > 0:
             word_doc.add_page_break()
 
-        # テキストブロックを位置順に抽出
-        blocks = page.get_text("blocks")
-        # 上から下、左から右の順にソート
-        blocks.sort(key=lambda b: (b[1], b[0]))
+        # テキスト抽出を試行
+        text_blocks = _extract_page_text_blocks(page)
 
-        for block in blocks:
-            # block[4] がテキスト内容、block[6] がブロックタイプ（0=テキスト）
-            if block[6] == 0:
-                text = block[4].strip()
-                if text:
-                    word_doc.add_paragraph(text)
+        if text_blocks:
+            # テキストが取得できた場合はテキストとして挿入
+            for text in text_blocks:
+                word_doc.add_paragraph(text)
+        else:
+            # テキストが取得できない場合（スキャンPDF等）はページを画像として挿入
+            import io
+            img_bytes = _render_page_to_image_bytes(page)
+            img_stream = io.BytesIO(img_bytes)
+            # A4幅に合わせて画像を挿入（余白を考慮して6インチ幅）
+            word_doc.add_paragraph()  # 空行
+            word_doc.add_picture(img_stream, width=Inches(6))
 
         # 進捗更新
         if job_id in conversion_jobs:
@@ -229,6 +264,10 @@ def convert_pdf_to_xlsx(
     original_filename: str = "",
 ) -> list[Path]:
     """PDFをExcel(.xlsx)に変換する"""
+    import io
+
+    from openpyxl.drawing.image import Image as XlImage
+
     stem = Path(original_filename).stem if original_filename else pdf_path.stem
     out_name = f"{stem}.xlsx"
     out_path = output_dir / out_name
@@ -249,40 +288,63 @@ def convert_pdf_to_xlsx(
         page = pdf_doc[page_num]
         ws = wb.create_sheet(title=f"Page{page_num + 1}")
 
-        # テーブル構造を検出して行・列に配置
-        # テキストブロックを取得し、Y座標でグループ化して行に変換
-        blocks = page.get_text("blocks")
-        text_blocks = [b for b in blocks if b[6] == 0 and b[4].strip()]
+        # wordsモードで個々の単語を座標付きで抽出
+        # words: (x0, y0, x1, y1, "word", block_no, line_no, word_no)
+        words = page.get_text("words")
+        words = [w for w in words if w[4].strip()]
 
-        if not text_blocks:
-            continue
+        if words:
+            # Y座標でグループ化して行に、X座標でソートして列に配置
+            words.sort(key=lambda w: (w[1], w[0]))
+            rows = []
+            current_row = [words[0]]
+            for w in words[1:]:
+                # Y座標の差が小さければ同じ行（フォントサイズの半分程度を閾値に）
+                if abs(w[1] - current_row[0][1]) < 10:
+                    current_row.append(w)
+                else:
+                    rows.append(current_row)
+                    current_row = [w]
+            rows.append(current_row)
 
-        # Y座標でグループ化（近い位置のブロックを同じ行とみなす）
-        text_blocks.sort(key=lambda b: (b[1], b[0]))
-        rows = []
-        current_row = [text_blocks[0]]
-        for block in text_blocks[1:]:
-            # Y座標の差が小さければ同じ行
-            if abs(block[1] - current_row[0][1]) < 10:
-                current_row.append(block)
+            for row_idx, row_words in enumerate(rows, start=1):
+                row_words.sort(key=lambda w: w[0])
+
+                # X座標の間隔が大きい箇所で列を分割
+                columns = [[row_words[0]]]
+                for w in row_words[1:]:
+                    prev_end = columns[-1][-1][2]  # 前の単語の右端x1
+                    gap = w[0] - prev_end  # 現在の単語の左端x0との差
+                    if gap > 20:  # 間隔が大きければ新しい列
+                        columns.append([w])
+                    else:
+                        columns[-1].append(w)
+
+                for col_idx, col_words in enumerate(columns, start=1):
+                    text = " ".join(w[4] for w in col_words).strip()
+                    # 数値として解釈できる場合は数値で入力
+                    try:
+                        value = float(text.replace(",", ""))
+                        if value == int(value):
+                            value = int(value)
+                        ws.cell(row=row_idx, column=col_idx, value=value)
+                    except ValueError:
+                        ws.cell(row=row_idx, column=col_idx, value=text)
+        else:
+            # テキストが取得できない場合: プレーンテキストを試行
+            plain = page.get_text("text").strip()
+            if plain:
+                for row_idx, line in enumerate(plain.split("\n"), start=1):
+                    if line.strip():
+                        ws.cell(row=row_idx, column=1, value=line.strip())
             else:
-                rows.append(current_row)
-                current_row = [block]
-        rows.append(current_row)
-
-        # 各行をX座標順にソートしてセルに配置
-        for row_idx, row_blocks in enumerate(rows, start=1):
-            row_blocks.sort(key=lambda b: b[0])
-            for col_idx, block in enumerate(row_blocks, start=1):
-                text = block[4].strip()
-                # 数値として解釈できる場合は数値で入力
-                try:
-                    value = float(text.replace(",", ""))
-                    if value == int(value):
-                        value = int(value)
-                    ws.cell(row=row_idx, column=col_idx, value=value)
-                except ValueError:
-                    ws.cell(row=row_idx, column=col_idx, value=text)
+                # テキストが全くない場合（スキャンPDF等）: ページを画像として埋め込み
+                img_bytes = _render_page_to_image_bytes(page)
+                img_stream = io.BytesIO(img_bytes)
+                xl_img = XlImage(img_stream)
+                xl_img.width = 600
+                xl_img.height = int(600 * page.rect.height / page.rect.width)
+                ws.add_image(xl_img, "A1")
 
         # 進捗更新
         if job_id in conversion_jobs:
