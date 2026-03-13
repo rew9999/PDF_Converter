@@ -627,9 +627,10 @@ async def ocr_install_jpn():
     import urllib.request
 
     # Tesseractのtessdataディレクトリを特定
+    tesseract_cmd = pytesseract.pytesseract.tesseract_cmd or "tesseract"
     try:
         output = subprocess.check_output(
-            ["tesseract", "--print-parameters"],
+            [tesseract_cmd, "--print-parameters"],
             stderr=subprocess.STDOUT,
             text=True,
         )
