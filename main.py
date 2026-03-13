@@ -14,6 +14,17 @@ import io
 
 import fitz  # PyMuPDF
 import pytesseract
+
+# Windows環境でTesseractのパスを自動検出
+if sys.platform == "win32" and not shutil.which("tesseract"):
+    _tesseract_candidates = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    ]
+    for _path in _tesseract_candidates:
+        if os.path.isfile(_path):
+            pytesseract.pytesseract.tesseract_cmd = _path
+            break
 from docx import Document
 from docx.shared import Inches, Pt
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
