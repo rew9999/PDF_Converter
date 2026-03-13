@@ -693,30 +693,37 @@ async def ocr_install_jpn():
     if os.path.exists(jpn_path):
         return {"message": "日本語データは既にインストール済みです", "path": jpn_path}
 
-    # 書き込み権限がない場合、ユーザーローカルのtessdataにフォールバック
-    if not os.access(tessdata_dir, os.W_OK):
-        if sys.platform == "win32":
-            local_tessdata = os.path.join(
-                os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-                "Tesseract-OCR",
-                "tessdata",
-            )
-        else:
-            local_tessdata = os.path.join(
-                os.path.expanduser("~"), ".local", "share", "tessdata"
-            )
-        os.makedirs(local_tessdata, exist_ok=True)
-        tessdata_dir = local_tessdata
-        jpn_path = os.path.join(tessdata_dir, "jpn.traineddata")
-        # TESSDATA_PREFIXを設定してTesseractが認識できるようにする
-        os.environ["TESSDATA_PREFIX"] = tessdata_dir
-        if os.path.exists(jpn_path):
-            return {"message": "日本語データは既にインストール済みです", "path": jpn_path}
+    # ユーザーローカルのtessdataディレクトリ
+    if sys.platform == "win32":
+        local_tessdata = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+            "Tesseract-OCR",
+            "tessdata",
+        )
+    else:
+        local_tessdata = os.path.join(
+            os.path.expanduser("~"), ".local", "share", "tessdata"
+        )
 
-    # GitHubからダウンロード
+    # ローカルに既にインストール済みか確認
+    local_jpn_path = os.path.join(local_tessdata, "jpn.traineddata")
+    if os.path.exists(local_jpn_path):
+        os.environ["TESSDATA_PREFIX"] = local_tessdata
+        return {"message": "日本語データは既にインストール済みです", "path": local_jpn_path}
+
+    # GitHubからダウンロード（まずシステムディレクトリに試み、失敗したらローカルへ）
     url = "https://github.com/tesseract-ocr/tessdata_best/raw/main/jpn.traineddata"
     try:
         urllib.request.urlretrieve(url, jpn_path)
+    except PermissionError:
+        # システムディレクトリに書き込めない場合、ローカルにフォールバック
+        os.makedirs(local_tessdata, exist_ok=True)
+        jpn_path = local_jpn_path
+        try:
+            urllib.request.urlretrieve(url, jpn_path)
+        except Exception as e:
+            raise HTTPException(500, f"ダウンロードに失敗しました: {e}")
+        os.environ["TESSDATA_PREFIX"] = local_tessdata
     except Exception as e:
         raise HTTPException(500, f"ダウンロードに失敗しました: {e}")
 
