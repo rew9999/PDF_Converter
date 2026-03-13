@@ -25,6 +25,21 @@ if sys.platform == "win32" and not shutil.which("tesseract"):
         if os.path.isfile(_path):
             pytesseract.pytesseract.tesseract_cmd = _path
             break
+
+# ユーザーローカルのtessdataがあればTESSDATA_PREFIXに設定
+if "TESSDATA_PREFIX" not in os.environ:
+    if sys.platform == "win32":
+        _local_tessdata = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+            "Tesseract-OCR",
+            "tessdata",
+        )
+    else:
+        _local_tessdata = os.path.join(
+            os.path.expanduser("~"), ".local", "share", "tessdata"
+        )
+    if os.path.isdir(_local_tessdata):
+        os.environ["TESSDATA_PREFIX"] = _local_tessdata
 from docx import Document
 from docx.shared import Inches, Pt
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -677,6 +692,26 @@ async def ocr_install_jpn():
     jpn_path = os.path.join(tessdata_dir, "jpn.traineddata")
     if os.path.exists(jpn_path):
         return {"message": "日本語データは既にインストール済みです", "path": jpn_path}
+
+    # 書き込み権限がない場合、ユーザーローカルのtessdataにフォールバック
+    if not os.access(tessdata_dir, os.W_OK):
+        if sys.platform == "win32":
+            local_tessdata = os.path.join(
+                os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+                "Tesseract-OCR",
+                "tessdata",
+            )
+        else:
+            local_tessdata = os.path.join(
+                os.path.expanduser("~"), ".local", "share", "tessdata"
+            )
+        os.makedirs(local_tessdata, exist_ok=True)
+        tessdata_dir = local_tessdata
+        jpn_path = os.path.join(tessdata_dir, "jpn.traineddata")
+        # TESSDATA_PREFIXを設定してTesseractが認識できるようにする
+        os.environ["TESSDATA_PREFIX"] = tessdata_dir
+        if os.path.exists(jpn_path):
+            return {"message": "日本語データは既にインストール済みです", "path": jpn_path}
 
     # GitHubからダウンロード
     url = "https://github.com/tesseract-ocr/tessdata_best/raw/main/jpn.traineddata"
